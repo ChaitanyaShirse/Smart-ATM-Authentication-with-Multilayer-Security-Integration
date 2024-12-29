@@ -1,0 +1,120 @@
+#include <Keypad.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// RFID Pins
+#define RST_PIN 9   // Reset pin
+#define SS_PIN 10   // Slave select pin
+MFRC522 rfid(SS_PIN, RST_PIN);
+
+// LCD Setup
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Adjust the address 0x27 as per your LCD module
+
+// Keypad Setup
+const byte ROWS = 4; // Four rows
+const byte COLS = 4; // Four columns
+char keys[ROWS][COLS] = {
+  {'1', '2', '3', 'C'},
+  {'4', '5', '6', 'X'},
+  {'7', '8', '9', 'E'},
+  {'*', '0', '#', 'V'}
+};
+byte rowPins[ROWS] = {A0, A1, A2, A3}; // Connect to the row pinouts of the keypad
+byte colPins[COLS] = {2, 3, 4, 5};     // Connect to the column pinouts of the keypad
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+// RFID status
+bool rfidActive = false; // Variable to track RFID reading status
+
+
+void setup() {
+  Serial.begin(9600); // Start serial communication
+  SPI.begin();        // Initialize SPI bus
+  rfid.PCD_Init();    // Initialize RFID module
+  lcd.init();         // Initialize LCD
+  lcd.backlight();    // Turn on LCD backlight
+  lcd.setCursor(0, 0);
+  lcd.print("Ready to START");
+  Serial.println("RFID Reader Initialized");
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n'); // Read command from Python
+    command.trim(); // Remove any extra whitespace
+
+    if (command == "START_RFID") {
+      rfidActive = true;  // Enable RFID reading
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Scan RFID...");
+      Serial.println("RFID Reading Enabled");
+    } else if (command == "STOP_RFID") {
+      rfidActive = false; // Disable RFID reading
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("RFID Stopped");
+      Serial.println("RFID Reading Disabled");
+    }
+  }
+  // Check for RFID card presence
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Card Scanned");
+    
+    // Format RFID UID as a single string
+    String uid = "";
+    for (byte i = 0; i < rfid.uid.size; i++) {
+      if (rfid.uid.uidByte[i] < 0x10) {
+        uid += "0"; // Add leading zero for single-digit values
+      }
+      uid += String(rfid.uid.uidByte[i], HEX);
+    }
+
+    // Convert to uppercase
+    uid.toUpperCase();
+    Serial.println(uid); // Send UID to Python
+    delay(1000);
+
+    // Stop RFID reading after scanning a card
+    rfidActive = false;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("RFID Stopped");
+    Serial.println("RFID Reading Disabled");
+  }
+  char key = keypad.getKey(); // Get the key pressed on the keypad
+
+  if (key) { // If a key is pressed
+    Serial.print(key); // Send the key to the Python script
+  }
+
+  // Check if data is received from Python
+  if (Serial.available() > 0) {
+    String receivedData = Serial.readStringUntil('\n'); // Read data until newline
+    
+    if (receivedData.startsWith("DISPLAY:")) {
+      lcd.clear(); // Clear the LCD
+      lcd.setCursor(0, 0);
+      lcd.print(receivedData.substring(8)); // Display the text after "DISPLAY:"
+    }
+
+    // Scroll the received data if it's too long for the LCD
+    if (receivedData.length() > 16) { // Assuming a 16x2 LCD
+        for (int i = 0; i <= receivedData.length() - 16; i++) {
+            lcd.setCursor(0, 1);
+            lcd.print(receivedData.substring(i, i + 16)); // Display 16 characters at a time
+            delay(300); // Adjust scroll speed (in milliseconds)
+        }
+    } else {
+        lcd.setCursor(0, 1);
+        lcd.print("                "); // Overwrite with blank spaces
+        lcd.setCursor(0, 1);
+        lcd.print(receivedData); // Write new data
+    }
+  }
+}
+
